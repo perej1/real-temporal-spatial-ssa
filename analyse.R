@@ -13,8 +13,9 @@ option_list <- list(
   make_option("--tblocks", type = "character", default = "33:33:34",
               help = stringr::str_c("Segmentation of time, string gives ",
                                     "proportions of the segment lengths")),
-              make_option("--dim_nonstationary", type = "integer", default = 1,
-                          help = "Number of nonstationary components")
+  make_option("--seed", type = "integer", default = 500,
+              help = stringr::str_c("Seed for plotting the field on a",
+                                    "fixed time/spatial point"))
 )
 opt_parser <- OptionParser(option_list = option_list)
 opt <- parse_args(opt_parser)
@@ -83,11 +84,10 @@ mean_var <- purrr::pmap(list(arg1 = means_segment$n_prop, arg2 = outer_prods),
 
 # Plot scree plot
 eigen_val <- eigen(mean_var)$values
-plot(1:4, eigen_val)
 
-scree_name <- stringr::str_c("xblocks_", opt$xblocks,
-                             "_yblocks_", opt$yblocks,
-                             "_tblocks_", opt$tblocks, ".pdf")
+filename <- stringr::str_c("xblocks_", opt$xblocks,
+                           "_yblocks_", opt$yblocks,
+                           "_tblocks_", opt$tblocks, ".pdf")
 
 scree <- tibble(x = 1:4, y = eigen_val) %>%
   ggplot(aes(x, y)) +
@@ -102,10 +102,51 @@ scree <- tibble(x = 1:4, y = eigen_val) %>%
   xlab(expression(lambda[i])) +
   ylab("Value") +
   ylim(0, 0.35)
-  ggsave(stringr::str_c("plots/scree/", scree_name), scree)
+  ggsave(stringr::str_c("plots/scree/", filename), scree)
 
-# Compute unmixing matrix
+# Compute unmixing matrix and latent components
 v_transpose <- t(eigen(mean_var)$vectors)
 w <- v_transpose %*% cov_p_inv_sqrt
-w_nonstationary <- w[1:opt$dim_nonstationary, , drop = FALSE]
-w_stationary <- w[(opt$dim_nonstationary + 1):dim, , drop = FALSE]
+
+latent <- t(apply(observed, 1, function(x) w %*% x)) %>%
+  as_tibble(.name_repair = "universal")
+colnames(latent) <- stringr::str_c("f", 1:dim)
+
+# Add coordinates to the latent components
+latent <- latent %>%
+  mutate(time = veneto$time, geometry = veneto$geometry) %>%
+  sftime::st_sftime(time_column_name = "time", sf_column_name = "geometry")
+
+# Plot first and last component at a random location for all time points
+set.seed(opt$seed) # 500
+location <- latent$geometry[sample(1:nrow(latent), 1)]
+latent_location <- latent %>%
+  filter(geometry == location) %>%
+  select(f1, f4, time) %>%
+  sf::st_drop_geometry()
+
+
+fix_location <- latent_location %>%
+  gather("field", "value", -time) %>%
+  ggplot(aes(x = time, y = value, linetype = factor(field))) +
+  geom_line() +
+  theme(panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        panel.grid.major.y = element_line(colour = alpha("black", 0.2)),
+        panel.grid.major.x = element_line(colour = alpha("black", 0.2))) +
+  xlab("Time") +
+  ylab("Value") +
+  scale_linetype_manual(values = c("f1" = "solid", "f4" = "dashed"),
+                        name = "Fields",
+                        labels = c("f1" = "Nonstationary", "f4" = "Stationary"))
+ggsave(stringr::str_c("plots/paths/", "fix_location_", scree_name),
+       fix_location)
+
+# Plot first and last component at a random time point for all time locations
+t <- latent$time[sample(1:nrow(latent), 1)]
+latent_time <- latent %>%
+  filter(time == t) %>%
+  select(f1, f4, time) %>%
+  sftime::st_drop_time()
