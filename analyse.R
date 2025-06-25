@@ -1,7 +1,7 @@
 library(tidyverse)
 library(sftime)
 library(optparse)
-#library(SpaceTimeBSS)
+library(tmap)
 
 option_list <- list(
   make_option("--xblocks", type = "character", default = "33:33:34",
@@ -37,10 +37,6 @@ veneto <- file_veneto %>%
 observed <- veneto %>%
   sftime::st_drop_time() %>%
   sf::st_drop_geometry()
-
-# Coordinates
-coords <- veneto %>%
-  select(geometry, time)
 
 # Compute whitened field
 dim <- ncol(observed)
@@ -102,7 +98,7 @@ scree <- tibble(x = 1:4, y = eigen_val) %>%
   xlab(expression(lambda[i])) +
   ylab("Value") +
   ylim(0, 0.35)
-  ggsave(stringr::str_c("plots/scree/", filename), scree)
+ggsave(stringr::str_c("plots/scree/", filename), scree)
 
 # Compute unmixing matrix and latent components
 v_transpose <- t(eigen(mean_var)$vectors)
@@ -141,7 +137,7 @@ fix_location <- latent_location %>%
   scale_linetype_manual(values = c("f1" = "solid", "f4" = "dashed"),
                         name = "Fields",
                         labels = c("f1" = "Nonstationary", "f4" = "Stationary"))
-ggsave(stringr::str_c("plots/paths/", "fix_location_", scree_name),
+ggsave(stringr::str_c("plots/paths/", "fix_location_", filename),
        fix_location)
 
 # Plot first and last component at a random time point for all time locations
@@ -149,4 +145,61 @@ t <- latent$time[sample(1:nrow(latent), 1)]
 latent_time <- latent %>%
   filter(time == t) %>%
   select(f1, f4, time) %>%
-  sftime::st_drop_time()
+  sftime::st_drop_time() %>%
+  mutate(f1 = f1  - mean(f1), f4 = f4  - mean(f4))
+
+latent_time_f1 <- latent_time %>%
+  select(-f4)
+
+latent_time_f4 <- latent_time %>%
+  select(-f1)
+
+
+veneto_box <- sf::st_buffer(veneto$geometry, dist = 50 * 1000) %>%
+  st_bbox()
+
+sf_italy <-
+  rnaturalearth::ne_countries(returnclass = "sf", scale = "medium") %>%
+  dplyr::filter(name == "Italy") %>%
+  st_transform(crs = 3003)
+
+# Show Veneto area in Italy
+pdf("plots/veneto.pdf")
+tm_shape(sf_italy) +
+  tm_polygons() +
+  tm_shape(st_as_sfc(veneto_box)) +
+  tm_polygons(col = "red", fill_alpha = 0)
+dev.off()
+
+
+n_break <- 10
+minbreak <- min(c(range(latent_time_f1$f1), range(latent_time_f4$f4)))
+maxbreak <- max(c(range(latent_time_f1$f1), range(latent_time_f4$f4)))
+breaks <- seq(minbreak, maxbreak, length.out = n_break + 1)
+
+
+# Show nonstationary field at a fixed time point
+pdf(stringr::str_c("plots/paths/", "fix_time_nonstationary_", filename))
+tm_shape(sf_italy, bbox = veneto_box) +
+  tm_polygons() +
+  tm_shape(latent_time_f1) +
+  tm_bubbles(size = 1, fill = "f1",
+             fill.scale = tm_scale_intervals(n = n_break, style = "fixed",
+                                             breaks = breaks,
+                                             midpoint = NA,
+                                             values = "-brewer.spectral"),
+             fill.legend = tm_legend("Nonstationary"))
+dev.off()
+
+# Show stationary field at a fixed time point
+pdf(stringr::str_c("plots/paths/", "fix_time_stationary_", filename))
+tm_shape(sf_italy, bbox = veneto_box) +
+  tm_polygons() +
+  tm_shape(latent_time_f4) +
+  tm_bubbles(size = 1, fill = "f4",
+             fill.scale = tm_scale_intervals(n = n_break, style = "fixed",
+                                             breaks = breaks,
+                                             midpoint = NA,
+                                             values = "-brewer.spectral"),
+             fill.legend = tm_legend("Stationary"))
+dev.off()

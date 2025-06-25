@@ -27,23 +27,23 @@ compute_segments <- function(data, x_prop, y_prop, time_prop) {
   if (sum(x_prop) != 100 || sum(y_prop) != 100 || sum(time_prop) != 100) {
     rlang::abort("Sum of proportions must be 100.")
   }
-  
+
   time <- sftime::st_time(data) %>%
     unique()
-  
+
   geom <- sf::st_coordinates(data) %>%
     unique() %>%
     as_tibble() %>%
     rename_with(tolower)
-  
+
   xlen <- max(geom$x) - min(geom$x)
   x_cuts <- min(geom$x) + c(0, cumsum(x_prop / 100)) * xlen
-  
+
   ylen <- max(geom$y) - min(geom$y)
   y_cuts <- min(geom$y) + c(0, cumsum(y_prop / 100)) * ylen
-  
+
   time_cuts <- quantile(1:max(time), c(0, cumsum(time_prop / 100)))
-  
+
   data %>%
     mutate(x_segment = cut(sf::st_coordinates(.)[, "X"], x_cuts,
                            include.lowest = TRUE),
