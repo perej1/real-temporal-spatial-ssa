@@ -12,11 +12,12 @@ option_list <- list(
                                     "proportions of the segment lengths")),
   make_option("--tblocks", type = "character", default = "33:33:34",
               help = stringr::str_c("Segmentation of time, string gives ",
-                                    "proportions of the segment lengths"))
+                                    "proportions of the segment lengths")),
+              make_option("--dim_nonstationary", type = "integer", default = 1,
+                          help = "Number of nonstationary components")
 )
 opt_parser <- OptionParser(option_list = option_list)
 opt <- parse_args(opt_parser)
-
 
 source("functions.R")
 load("data/veneto.RData")
@@ -30,7 +31,6 @@ veneto <- file_veneto %>%
   sf::st_as_sf(coords = c("x", "y"), sf_column_name = "geometry",
                crs = 3003) %>%
   sftime::st_sftime(time_column_name = "time")
-veneto
 
 # Data without locations and time
 observed <- veneto %>%
@@ -53,8 +53,6 @@ whitened <- observed %>%
   as_tibble(.name_repair = "minimal")
 colnames(whitened) <- stringr::str_c("f", 1:dim)
 
-whitened
-
 # Parse cut points
 x_prop <- stringr::str_split(opt$xblocks, ":", simplify = TRUE) %>%
   as.integer()
@@ -63,16 +61,9 @@ y_prop <- stringr::str_split(opt$yblocks, ":", simplify = TRUE) %>%
 time_prop <- stringr::str_split(opt$tblocks, ":", simplify = TRUE) %>%
   as.integer()
 
-x_prop
-y_prop
-time_prop
-
 whitened_with_seg <- compute_segments(veneto, x_prop, y_prop, time_prop) %>%
   cbind(whitened) %>%
   group_by(x_segment, y_segment, time_segment)
-
-whitened_with_seg
-veneto
 
 # Compute means and proportional sample sizes in segments
 means_segment <- whitened_with_seg %>%
@@ -90,16 +81,31 @@ mean_var <- purrr::pmap(list(arg1 = means_segment$n_prop, arg2 = outer_prods),
   purrr::reduce(`+`)
 
 
-# Check eigenvalues
-eigen_val = eigen(mean_var)$values
+# Plot scree plot
+eigen_val <- eigen(mean_var)$values
 plot(1:4, eigen_val)
 
+scree_name <- stringr::str_c("xblocks_", opt$xblocks,
+                             "_yblocks_", opt$yblocks,
+                             "_tblocks_", opt$tblocks, ".pdf")
+
+scree <- tibble(x = 1:4, y = eigen_val) %>%
+  ggplot(aes(x, y)) +
+  geom_point(size = 3) +
+  geom_line() +
+  theme(panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        panel.grid.major.y = element_line(colour = alpha("black", 0.2)),
+        panel.grid.major.x = element_line(colour = alpha("black", 0.2))) +
+  xlab(expression(lambda[i])) +
+  ylab("Value") +
+  ylim(0, 0.35)
+  ggsave(stringr::str_c("plots/scree/", scree_name), scree)
+
 # Compute unmixing matrix
-dim_nonstationary <- 2
 v_transpose <- t(eigen(mean_var)$vectors)
 w <- v_transpose %*% cov_p_inv_sqrt
-w_nonstationary <- w[1:dim_nonstationary, , drop = FALSE]
-w_stationary <- w[(dim_nonstationary + 1):dim, , drop = FALSE]
-
-
-
+w_nonstationary <- w[1:opt$dim_nonstationary, , drop = FALSE]
+w_stationary <- w[(opt$dim_nonstationary + 1):dim, , drop = FALSE]
